@@ -4,6 +4,7 @@ import { useManuscript } from './model/useManuscript'
 import { CommentMargin } from './ui/CommentMargin'
 import { FormatBar } from './ui/FormatBar'
 import { LayerPanel } from './ui/LayerPanel'
+import { Outline } from './ui/Outline'
 import { TopBar } from './ui/TopBar'
 
 export default function App() {
@@ -49,6 +50,11 @@ export default function App() {
         }}
       />
       <div className="workspace">
+        <Outline
+          entries={manuscript.outline}
+          activePos={manuscript.currentHeadingPos}
+          onJump={manuscript.jumpToHeading}
+        />
         <div className="manuscript-column">
           <FormatBar
             format={manuscript.format}
@@ -56,6 +62,7 @@ export default function App() {
             commentCount={manuscript.comments.length}
             onItalic={() => manuscript.toggleMark('italic')}
             onBold={() => manuscript.toggleMark('bold')}
+            onHeading={manuscript.setHeading}
             onCenter={manuscript.toggleCenter}
             onIndent={manuscript.toggleIndent}
             onComment={manuscript.addComment}

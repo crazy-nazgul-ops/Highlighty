@@ -6,6 +6,7 @@ type Props = {
   commentCount: number
   onItalic: () => void
   onBold: () => void
+  onHeading: (level: 1 | 2 | 3) => void
   onCenter: () => void
   onIndent: () => void
   onComment: () => void
@@ -18,6 +19,7 @@ export function FormatBar({
   commentCount,
   onItalic,
   onBold,
+  onHeading,
   onCenter,
   onIndent,
   onComment,
@@ -31,6 +33,15 @@ export function FormatBar({
         </button>
         <button type="button" aria-pressed={format.bold} onClick={onBold}>
           Bold
+        </button>
+        <button type="button" aria-pressed={format.heading === 1} onClick={() => onHeading(1)} title="Chapter">
+          H1
+        </button>
+        <button type="button" aria-pressed={format.heading === 2} onClick={() => onHeading(2)} title="Subchapter">
+          H2
+        </button>
+        <button type="button" aria-pressed={format.heading === 3} onClick={() => onHeading(3)} title="Section">
+          H3
         </button>
         <button type="button" aria-pressed={format.center} onClick={onCenter}>
           Center

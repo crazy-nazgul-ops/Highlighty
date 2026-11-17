@@ -10,6 +10,7 @@ import {
   selectionCoveredBy,
   toggleHighlightLayer,
 } from '../editor/highlights'
+import { activeHeadingPos, collectOutline, type OutlineEntry } from '../editor/outline'
 import { cloneComments, plainTextToManuscriptHtml, remapPastedAnnotations, sanitizeManuscriptHtml } from '../editor/paste'
 import { fileSlug, makeFile, parseManuscriptFile } from './document'
 import { EMPTY_DOC, LAYER_PALETTE, type Comment, type Layer, type ManuscriptFile } from './types'
@@ -23,6 +24,7 @@ export type FormatState = {
   bold: boolean
   center: boolean
   indent: boolean
+  heading: number
 }
 
 const INITIAL_FORMAT: FormatState = {
@@ -31,17 +33,20 @@ const INITIAL_FORMAT: FormatState = {
   bold: false,
   center: false,
   indent: false,
+  heading: 0,
 }
 
 function readFormat(editor: Editor): FormatState {
   const name = editor.state.selection.$from.parent.type.name
   const block = name === 'paragraph' || name === 'heading' ? name : 'paragraph'
+  const heading = editor.isActive('heading') ? Number(editor.getAttributes('heading').level) || 0 : 0
   return {
     empty: editor.state.selection.empty,
     italic: editor.isActive('italic'),
     bold: editor.isActive('bold'),
     center: editor.isActive({ textAlign: 'center' }),
     indent: editor.isActive(block, { indent: true }),
+    heading,
   }
 }
 
@@ -483,6 +488,36 @@ export function useManuscript() {
     editor.chain().focus().updateAttributes(name, { indent: !indented }).run()
   }, [editor])
 
+  const setHeading = useCallback(
+    (level: 1 | 2 | 3) => {
+      if (!editor) return
+      if (editor.isActive('heading', { level })) editor.chain().focus().setParagraph().run()
+      else editor.chain().focus().setHeading({ level }).run()
+    },
+    [editor],
+  )
+
+  const jumpToHeading = useCallback(
+    (pos: number) => {
+      if (!editor) return
+      const node = editor.state.doc.nodeAt(pos)
+      if (!node || node.type.name !== 'heading') return
+      const inside = Math.min(pos + 1, pos + node.nodeSize - 1)
+      editor.chain().setTextSelection(inside).focus(inside, { scrollIntoView: false }).run()
+      const scrollHeading = () => {
+        const dom = editor.view.nodeDOM(pos)
+        const scroller = document.querySelector('.scroll')
+        if (!(dom instanceof HTMLElement) || !(scroller instanceof HTMLElement)) return
+        const top =
+          dom.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 12
+        scroller.scrollTop = Math.max(0, top)
+      }
+      window.requestAnimationFrame(scrollHeading)
+      window.setTimeout(scrollHeading, 80)
+    },
+    [editor],
+  )
+
   const newDocument = useCallback(() => {
     if (!editor) return
     const hasWork = !editor.isEmpty || layers.length > 0 || comments.length > 0
@@ -533,6 +568,16 @@ export function useManuscript() {
     return comments.filter((comment) => anchors.has(comment.id))
   }, [comments, editor, revision])
 
+  const outline = useMemo<OutlineEntry[]>(() => {
+    if (!editor) return []
+    return collectOutline(editor.state.doc)
+  }, [editor, revision])
+
+  const currentHeadingPos = useMemo(() => {
+    if (!editor) return null
+    return activeHeadingPos(outline, editor.state.selection.from)
+  }, [editor, outline, selectionVersion])
+
   return {
     editor,
     title,
@@ -569,9 +614,13 @@ export function useManuscript() {
     updateComment,
     deleteComment,
     revealComment,
+    outline,
+    currentHeadingPos,
+    jumpToHeading,
     toggleMark,
     toggleCenter,
     toggleIndent,
+    setHeading,
     newDocument,
     openText,
     saveFile,

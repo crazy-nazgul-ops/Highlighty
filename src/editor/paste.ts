@@ -102,6 +102,203 @@ function readAlign(style: Record<string, string>, el: HTMLElement): string | nul
   return null
 }
 
+function clampHeading(value: string | null | undefined): number | null {
+  if (!value) return null
+  const amount = Number.parseInt(value, 10)
+  if (!Number.isFinite(amount) || amount < 1) return null
+  return Math.min(amount, 6)
+}
+
+function isTitleLike(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed || trimmed.length > 90) return false
+  if (/[.!?]["')\]]?\s+\S/.test(trimmed)) return false
+  return trimmed.split(/\s+/).length <= 14
+}
+
+function isRomanNumeral(text: string): boolean {
+  return (
+    text.length > 0 &&
+    text.length <= 8 &&
+    /^(?:M{0,3})(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/i.test(text)
+  )
+}
+
+function isAllCapsTitle(text: string): boolean {
+  const trimmed = text.trim()
+  const letters = trimmed.replace(/[^A-Za-z]/g, '')
+  if (letters.length < 4 || letters !== letters.toUpperCase()) return false
+  if (trimmed.length > 60 || /[.!?]/.test(trimmed)) return false
+  const words = trimmed.split(/\s+/)
+  return words.length >= 2 && words.length <= 10
+}
+
+function keywordHeading(text: string): number | null {
+  if (!isTitleLike(text)) return null
+  if (/[.!?]["')\]]?$/.test(text) && !/[:\u2014\u2013]| - /.test(text)) return null
+  if (/^(?:chapter|chap\.?|part|book|act)\b/i.test(text)) return 1
+  if (/^(?:prologue|epilogue|preface|foreword|afterword|introduction|conclusion|interlude|coda|appendix)\b/i.test(text)) {
+    return 1
+  }
+  if (/^(?:subchapter|subsection)\b/i.test(text)) return 2
+  if (/^(?:section|scene)\s+(?:\d+|[ivxlcdm]+)\b/i.test(text)) return 2
+  return null
+}
+
+export function headingFromPlainLine(line: string): { level: number; text: string } | null {
+  const trimmed = line.trim()
+  if (!trimmed) return null
+
+  const markdown = trimmed.match(/^(#{1,6})\s+(\S.*)$/)
+  if (markdown) {
+    const text = markdown[2].trim()
+    if (text) return { level: markdown[1].length, text }
+  }
+
+  const numbered = trimmed.match(/^(\d+(?:\.\d+)+)\.?\s+(\S.*)$/)
+  if (numbered && isTitleLike(numbered[2]) && trimmed.length <= 90) {
+    return {
+      level: Math.min(numbered[1].split('.').length, 6),
+      text: trimmed,
+    }
+  }
+
+  const keyword = keywordHeading(trimmed)
+  if (keyword) return { level: keyword, text: trimmed }
+  if (/^\d{1,3}$/.test(trimmed)) return { level: 1, text: trimmed }
+  if (isRomanNumeral(trimmed)) return { level: 1, text: trimmed.toUpperCase() }
+  if (isAllCapsTitle(trimmed)) return { level: 1, text: trimmed }
+  return null
+}
+
+function explicitHeadingLevel(el: HTMLElement, style: Record<string, string>, tag: string): number | null {
+  const fromTag = tag.match(/^h([1-6])$/)
+  if (fromTag) return Number(fromTag[1])
+
+  if (el.getAttribute('role') === 'heading') {
+    const aria = clampHeading(el.getAttribute('aria-level') || '1')
+    if (aria) return aria
+  }
+
+  const outline = clampHeading(style['mso-outline-level'] || el.getAttribute('data-outline-level'))
+  if (outline) return outline
+
+  const styleName = (style['mso-style-name'] || '').replace(/["']/g, '').trim().toLowerCase()
+  if (styleName === 'title') return 1
+  if (styleName === 'subtitle') return 2
+  const named = styleName.match(/^heading\s*([1-6])$/)
+  if (named) return Number(named[1])
+
+  const classes = [...el.classList].join(' ')
+  if (/(?:^|[^a-z])(?:mso)?subtitle(?:[^a-z]|$)/i.test(classes)) return 2
+  if (/(?:^|[^a-z])(?:mso)?title(?:[^a-z]|$)/i.test(classes)) return 1
+  const fromClass = classes.match(/(?:^|[^a-z])(?:mso)?heading(?:_20_|[\s_-]*)([1-6])(?:[^0-9]|$)/i)
+  if (fromClass) return Number(fromClass[1])
+  return null
+}
+
+function parseFontSizePt(value: string | undefined): number | null {
+  if (!value) return null
+  const match = value.trim().match(/^([\d.]+)\s*(pt|px|em|rem)?$/i)
+  if (!match) return null
+  const amount = Number.parseFloat(match[1])
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  const unit = (match[2] || 'pt').toLowerCase()
+  if (unit === 'pt') return amount
+  if (unit === 'px') return amount * 0.75
+  if (unit === 'em' || unit === 'rem') return amount * 12
+  return null
+}
+
+function nearestFontSize(node: Node, root: HTMLElement, styles: ClassStyles): number | null {
+  let current = node.parentElement
+  while (current) {
+    const size = parseFontSizePt(mergedStyle(current, styles)['font-size'])
+    if (size) return size
+    if (current === root) break
+    current = current.parentElement
+  }
+  return null
+}
+
+function uniformFontSizePt(el: HTMLElement, styles: ClassStyles): number | null {
+  let found: number | null = null
+  const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let current = walker.nextNode()
+  let saw = false
+  while (current) {
+    if ((current.textContent || '').trim()) {
+      saw = true
+      const size = nearestFontSize(current, el, styles)
+      if (!size) return null
+      if (found === null) found = size
+      else if (Math.abs(found - size) > 0.6) return null
+    }
+    current = walker.nextNode()
+  }
+  return saw ? found : null
+}
+
+function blockIsBold(el: HTMLElement, style: Record<string, string>, styles: ClassStyles, tag: string): boolean {
+  if (weightIsBold(style['font-weight'], tag)) return true
+  let saw = false
+  const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let current = walker.nextNode()
+  while (current) {
+    if (!(current.textContent || '').trim()) {
+      current = walker.nextNode()
+      continue
+    }
+    saw = true
+    let bold = false
+    let parent = current.parentElement
+    while (parent) {
+      const parentTag = parent.tagName.toLowerCase()
+      const weight = mergedStyle(parent, styles)['font-weight']
+      if (parentTag === 'b' || parentTag === 'strong' || weightIsBold(weight, parentTag)) {
+        bold = true
+        break
+      }
+      if (parent === el) break
+      parent = parent.parentElement
+    }
+    if (!bold) return false
+    current = walker.nextNode()
+  }
+  return saw
+}
+
+function levelFromSize(pt: number, text: string, bold: boolean, centered: boolean): number | null {
+  const trimmed = text.trim()
+  if (!trimmed || trimmed.length > 80) return null
+  if (/[.!?]/.test(trimmed)) return null
+  if (trimmed.split(/\s+/).length > 10) return null
+  const large = pt >= 18 || (pt >= 16 && (bold || centered)) || (pt >= 14 && bold && centered)
+  if (!large) return null
+  if (pt >= 20) return 1
+  if (pt >= 16) return 2
+  return 3
+}
+
+function resolveHeading(
+  el: HTMLElement,
+  style: Record<string, string>,
+  styles: ClassStyles,
+  tag: string,
+  text: string,
+  align: string | null,
+): { level: number | null; replaceText: string | null } {
+  const explicit = explicitHeadingLevel(el, style, tag)
+  if (explicit) return { level: explicit, replaceText: null }
+  if (!text) return { level: null, replaceText: null }
+  const plain = headingFromPlainLine(text)
+  if (plain) return { level: plain.level, replaceText: plain.text === text ? null : plain.text }
+  const size = uniformFontSizePt(el, styles)
+  if (!size) return { level: null, replaceText: null }
+  const level = levelFromSize(size, text, blockIsBold(el, style, styles, tag), align === 'center')
+  return { level, replaceText: null }
+}
+
 function consumeLeadingIndent(text: string, state: InlineState): string {
   if (!state.atStart) return text
   const match = text.match(/^[\t \u00a0]+/)
@@ -173,19 +370,24 @@ function renderInline(node: Node, state: InlineState, styles: ClassStyles): stri
 
 function renderBlock(el: HTMLElement, styles: ClassStyles): string {
   const tag = el.tagName.toLowerCase()
-  const blockTag = /^h[1-6]$/.test(tag) ? tag : 'p'
   const style = mergedStyle(el, styles)
   const align = readAlign(style, el)
+  const text = (el.textContent || '').replace(/\s+/g, ' ').trim()
+  const heading = resolveHeading(el, style, styles, tag, text, align)
+  const blockTag = heading.level ? `h${heading.level}` : 'p'
   const state: InlineState = {
     atStart: true,
-    allowIndent: align !== 'center',
-    indent: el.getAttribute('data-indent') === 'true' || isPositiveLength(style['text-indent']),
+    allowIndent: align !== 'center' && !heading.level,
+    indent:
+      !heading.level &&
+      (el.getAttribute('data-indent') === 'true' || isPositiveLength(style['text-indent'])),
     preserveBreaks: ['pre', 'pre-wrap', 'pre-line'].includes(style['white-space'] || ''),
   }
   let inner = ''
-  for (const child of el.childNodes) inner += renderInline(child, state, styles)
-  if (styleIsItalic(style['font-style'], tag) && !inner.includes('<em>')) inner = `<em>${inner}</em>`
-  if (weightIsBold(style['font-weight'], tag) && !inner.includes('<strong>')) {
+  if (heading.replaceText !== null) inner = escapeHtml(heading.replaceText)
+  else for (const child of el.childNodes) inner += renderInline(child, state, styles)
+  if (styleIsItalic(style['font-style'], tag) && inner && !inner.includes('<em>')) inner = `<em>${inner}</em>`
+  if (!heading.level && weightIsBold(style['font-weight'], tag) && inner && !inner.includes('<strong>')) {
     inner = `<strong>${inner}</strong>`
   }
 
@@ -239,21 +441,34 @@ export function sanitizeManuscriptHtml(html: string): string {
   return ''
 }
 
+function paragraphFromPlainLine(line: string): string {
+  let indent = false
+  let content = line
+  if (/^\t+/.test(content) || /^[ \u00a0]{4,}/.test(content)) {
+    indent = true
+    content = content.replace(/^(?:\t+|[ \u00a0]{4,})/, '')
+  }
+  const heading = headingFromPlainLine(content)
+  if (heading) return `<h${heading.level}>${escapeHtml(heading.text)}</h${heading.level}>`
+  content = content.replace(/\t/g, '\u2003\u2003')
+  const attrs = indent ? ' data-indent="true"' : ''
+  return `<p${attrs}>${escapeHtml(content)}</p>`
+}
+
 export function plainTextToManuscriptHtml(text: string): string {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
-  return lines
-    .map((line) => {
-      let indent = false
-      let content = line
-      if (/^\t+/.test(content) || /^[ \u00a0]{4,}/.test(content)) {
-        indent = true
-        content = content.replace(/^(?:\t+|[ \u00a0]{4,})/, '')
-      }
-      content = content.replace(/\t/g, '\u2003\u2003')
-      const attrs = indent ? ' data-indent="true"' : ''
-      return `<p${attrs}>${escapeHtml(content)}</p>`
-    })
-    .join('')
+  const blocks: string[] = []
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const underline = lines[index + 1] ?? ''
+    if (line.trim() && isTitleLike(line.trim()) && /^=+\s*$/.test(underline) && underline.trim().length >= 3) {
+      blocks.push(`<h1>${escapeHtml(line.trim())}</h1>`)
+      index += 1
+      continue
+    }
+    blocks.push(paragraphFromPlainLine(line))
+  }
+  return blocks.join('')
 }
 
 export function remapPastedAnnotations(
