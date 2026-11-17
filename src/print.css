@@ -1,0 +1,59 @@
+@media print {
+  @page {
+    size: landscape;
+    margin: 0.45in;
+  }
+
+  html, body, #root, .app, .workspace, .manuscript-column, .scroll {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+    min-width: 0 !important;
+  }
+
+  .topbar,
+  .format-bar,
+  .layers,
+  .paste-hint,
+  .no-print {
+    display: none !important;
+  }
+
+  .workspace, .manuscript-column, .scroll { display: block !important; }
+
+  .scroll { padding: 0; }
+
+  .sheet {
+    display: flex;
+    width: 980px;
+    margin: 0;
+    gap: 16px;
+    box-shadow: none;
+  }
+
+  .page {
+    width: 680px;
+    min-height: 0;
+    padding: 0;
+    background: white;
+    box-shadow: none !important;
+  }
+
+  .gutter { width: 270px; }
+
+  body.comments-hidden .gutter,
+  body.comments-hidden .comment-anchor {
+    display: none !important;
+  }
+
+  .bubble header button { display: none !important; }
+
+  .page,
+  .manuscript,
+  .hl-stack,
+  .bubble,
+  .comment-anchor {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}
